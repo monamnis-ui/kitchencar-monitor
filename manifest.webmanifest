@@ -1,0 +1,14 @@
+{
+  "name": "出店募集モニター",
+  "short_name": "出店モニター",
+  "start_url": "/kitchencar-monitor/",
+  "scope": "/kitchencar-monitor/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ff6b00",
+  "theme_color": "#ff6b00",
+  "icons": [
+    { "src": "/kitchencar-monitor/icon.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/kitchencar-monitor/icon.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
