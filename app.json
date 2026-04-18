@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "expo-app",
-    "slug": "expo-app",
+    "name": "出店募集モニター",
+    "slug": "kitchencar-monitor",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -10,20 +10,28 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#ff6b00"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": false,
+      "bundleIdentifier": "com.pierogifu.kitchencarmonitor"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#ff6b00"
       },
       "edgeToEdgeEnabled": true
     },
+    "plugins": [
+      ["expo-notifications", { "color": "#ff6b00" }]
+    ],
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "experiments": {
+      "baseUrl": "/kitchencar-monitor"
     }
   }
 }
