@@ -15,6 +15,8 @@ import { StatusBar } from 'expo-status-bar';
 // ============================================================
 const VAPID_PUBLIC_KEY = 'BDOSbrULqMeiPPv-3mmz9-POH7jz2nWrIPFnrTdAHyhyHev6L1ql3c92-W-Odug3uJKZ9VLhowaJ9dveYBm7jCY';
 const BASE_PATH = '/kitchencar-monitor';
+const GIST_ID = '26a2b414b79333a12e636f1d2a648d07';
+const GIST_FILE = 'sites.json';
 
 const IS_WEB = Platform.OS === 'web';
 
@@ -103,6 +105,23 @@ function webSupportStatus() {
     return { ok: false, code: 'no_notification', message: 'このブラウザは Notification API 非対応です。' };
   }
   return { ok: true };
+}
+
+async function sendSubscriptionToPc(sub) {
+  try {
+    const pcIp = await AsyncStorage.getItem('pcIp');
+    if (!pcIp) return { ok: false, reason: 'PC IP未設定' };
+    const res = await fetch(`http://${pcIp}:8080/subscriptions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sub.toJSON()),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: e.message || String(e) };
+  }
 }
 
 async function registerSwAndSubscribeWeb() {
@@ -213,6 +232,11 @@ function NotifTab() {
       if (IS_WEB) {
         const sub = await registerSwAndSubscribeWeb();
         setSubscription(sub);
+        // PC が同じWi-Fiにいれば自動送信
+        const r = await sendSubscriptionToPc(sub);
+        if (r.ok) {
+          Alert.alert('登録完了', 'PCに購読情報を自動送信しました。');
+        }
       } else {
         const t = await registerForPushExpo();
         setToken(t);
@@ -336,58 +360,109 @@ function NotifTab() {
 }
 
 // ============================================================
+// Gist ユーティリティ
+// ============================================================
+async function gistFetchSites() {
+  // 認証なしで公開Gistから読み取り（キャッシュ回避）
+  const url = `https://gist.githubusercontent.com/monamnis-ui/${GIST_ID}/raw/${GIST_FILE}?t=${Date.now()}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error(`読み取り失敗 HTTP ${res.status}`);
+  const text = await res.text();
+  try {
+    const data = JSON.parse(text);
+    if (Array.isArray(data)) return data;
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+async function gistWriteSites(sites, pat) {
+  if (!pat) throw new Error('GitHub Personal Access Token が未設定です');
+  const res = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Bearer ${pat}`,
+      'Accept': 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      files: { [GIST_FILE]: { content: JSON.stringify(sites, null, 2) } },
+    }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`書込失敗 HTTP ${res.status}: ${errText.slice(0, 120)}`);
+  }
+}
+
+// ============================================================
 // サイト管理タブ
 // ============================================================
 function SitesTab() {
-  const [pcIp, setPcIp] = useState('');
-  const [ipInput, setIpInput] = useState('');
+  const [pat, setPat] = useState('');
+  const [patInput, setPatInput] = useState('');
+  const [patSaved, setPatSaved] = useState(false);
   const [sites, setSites] = useState([]);
   const [fetching, setFetching] = useState(false);
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('');
-  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    AsyncStorage.getItem('pcIp').then(ip => {
-      if (ip) { setPcIp(ip); setIpInput(ip); fetchSites(ip); }
+    AsyncStorage.getItem('ghPat').then(p => {
+      if (p) { setPat(p); setPatSaved(true); }
     });
+    fetchSites();
   }, []);
 
-  async function saveIp() {
-    const ip = ipInput.trim();
-    if (!ip) return;
-    await AsyncStorage.setItem('pcIp', ip);
-    setPcIp(ip);
-    fetchSites(ip);
+  async function savePat() {
+    const v = patInput.trim();
+    if (!v) return;
+    await AsyncStorage.setItem('ghPat', v);
+    setPat(v);
+    setPatSaved(true);
+    setPatInput('');
+    Alert.alert('保存しました', 'GitHub Token を保存しました。');
   }
 
-  async function fetchSites(ip) {
-    const base = `http://${ip || pcIp}:8080`;
+  async function clearPat() {
+    await AsyncStorage.removeItem('ghPat');
+    setPat('');
+    setPatSaved(false);
+  }
+
+  async function fetchSites() {
     setFetching(true);
     try {
-      const res = await fetch(`${base}/sites`, { signal: AbortSignal.timeout(5000) });
-      const data = await res.json();
+      const data = await gistFetchSites();
       setSites(data);
-    } catch {
-      Alert.alert(
-        '接続失敗',
-        `PC (${ip || pcIp}:8080) に接続できません。\nPCのトレイアプリが起動しているか確認してください。`
-      );
+    } catch (e) {
+      Alert.alert('取得失敗', e.message || String(e));
     } finally {
       setFetching(false);
     }
   }
 
   function deleteSite(idx) {
+    if (!pat) {
+      Alert.alert('Token未設定', 'サイト編集には GitHub Token が必要です。');
+      return;
+    }
     Alert.alert('削除確認', `「${sites[idx].name}」を削除しますか？`, [
       { text: 'キャンセル', style: 'cancel' },
       {
         text: '削除', style: 'destructive', onPress: async () => {
+          setBusy(true);
           try {
-            await fetch(`http://${pcIp}:8080/sites/${idx}`, { method: 'DELETE' });
-            fetchSites();
-          } catch {
-            Alert.alert('エラー', '削除に失敗しました。');
+            const next = sites.filter((_, i) => i !== idx);
+            await gistWriteSites(next, pat);
+            setSites(next);
+          } catch (e) {
+            Alert.alert('エラー', e.message || String(e));
+          } finally {
+            setBusy(false);
           }
         },
       },
@@ -395,6 +470,10 @@ function SitesTab() {
   }
 
   async function addSite() {
+    if (!pat) {
+      Alert.alert('Token未設定', 'サイト追加には GitHub Token が必要です。');
+      return;
+    }
     if (!newName.trim() || !newUrl.trim()) {
       Alert.alert('入力エラー', 'サイト名とURLを入力してください。');
       return;
@@ -403,20 +482,17 @@ function SitesTab() {
       Alert.alert('URLエラー', 'URL は http:// または https:// で始めてください。');
       return;
     }
-    setAdding(true);
+    setBusy(true);
     try {
-      await fetch(`http://${pcIp}:8080/sites`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName.trim(), url: newUrl.trim() }),
-      });
+      const next = [...sites, { name: newName.trim(), url: newUrl.trim() }];
+      await gistWriteSites(next, pat);
+      setSites(next);
       setNewName('');
       setNewUrl('');
-      fetchSites();
-    } catch {
-      Alert.alert('エラー', '追加に失敗しました。');
+    } catch (e) {
+      Alert.alert('エラー', e.message || String(e));
     } finally {
-      setAdding(false);
+      setBusy(false);
     }
   }
 
@@ -425,27 +501,37 @@ function SitesTab() {
       <ScrollView contentContainerStyle={s.scroll}>
 
         <View style={s.card}>
-          <Text style={s.cardTitle}>PC 接続設定</Text>
+          <Text style={s.cardTitle}>GitHub 設定</Text>
           <Text style={s.hint}>
-            PCのトレイアイコンを右クリックし「API: x.x.x.x:8080」のIPアドレスを入力してください。
+            サイト一覧を Gist でクラウド同期します。編集するには Personal Access Token が必要です（読み取りのみなら不要）。
+            {'\n\n'}
+            取得方法：GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token
+            {'\n'}
+            Permissions: Gists → Read and write
           </Text>
-          <View style={s.row}>
-            <TextInput
-              style={[s.input, { flex: 1 }]}
-              placeholder="例: 192.168.1.10"
-              placeholderTextColor="#bbb"
-              value={ipInput}
-              onChangeText={setIpInput}
-              keyboardType="numeric"
-              autoCapitalize="none"
-            />
-            <TouchableOpacity
-              style={[s.btn, { marginTop: 0, marginLeft: 8, paddingHorizontal: 16 }]}
-              onPress={saveIp}
-            >
-              <Text style={s.btnText}>接続</Text>
-            </TouchableOpacity>
-          </View>
+          {patSaved ? (
+            <>
+              <Text style={s.diag}>✓ Token 登録済み</Text>
+              <TouchableOpacity style={[s.btn, { backgroundColor: '#888' }]} onPress={clearPat}>
+                <Text style={s.btnText}>Token をクリア</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <TextInput
+                style={s.input}
+                placeholder="github_pat_... または ghp_..."
+                placeholderTextColor="#bbb"
+                value={patInput}
+                onChangeText={setPatInput}
+                autoCapitalize="none"
+                secureTextEntry
+              />
+              <TouchableOpacity style={s.btn} onPress={savePat}>
+                <Text style={s.btnText}>Token を保存</Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
 
         <View style={s.card}>
@@ -453,15 +539,14 @@ function SitesTab() {
             <Text style={[s.cardTitle, { flex: 1, marginBottom: 0 }]}>
               監視サイト一覧（{sites.length}件）
             </Text>
-            <TouchableOpacity onPress={() => fetchSites()} disabled={!pcIp || fetching}>
+            <TouchableOpacity onPress={fetchSites} disabled={fetching}>
               <Text style={{ color: '#ff6b00', fontSize: 13 }}>
                 {fetching ? '更新中...' : '更新'}
               </Text>
             </TouchableOpacity>
           </View>
-          {!pcIp && <Text style={s.empty}>上でPCのIPアドレスを設定してください</Text>}
           {fetching && <ActivityIndicator color="#ff6b00" />}
-          {!fetching && pcIp && sites.length === 0 && (
+          {!fetching && sites.length === 0 && (
             <Text style={s.empty}>サイトがありません</Text>
           )}
           {sites.map((site, i) => (
@@ -470,7 +555,7 @@ function SitesTab() {
                 <Text style={s.siteName}>{site.name}</Text>
                 <Text style={s.siteUrl} numberOfLines={1}>{site.url}</Text>
               </View>
-              <TouchableOpacity onPress={() => deleteSite(i)} style={s.deleteBtn}>
+              <TouchableOpacity onPress={() => deleteSite(i)} style={s.deleteBtn} disabled={busy}>
                 <Text style={s.deleteBtnText}>削除</Text>
               </TouchableOpacity>
             </View>
@@ -496,11 +581,11 @@ function SitesTab() {
             keyboardType="url"
           />
           <TouchableOpacity
-            style={[s.btn, (!pcIp || adding) && { opacity: 0.5 }]}
+            style={[s.btn, (busy || !pat) && { opacity: 0.5 }]}
             onPress={addSite}
-            disabled={!pcIp || adding}
+            disabled={busy || !pat}
           >
-            <Text style={s.btnText}>{adding ? '追加中...' : 'サイトを追加'}</Text>
+            <Text style={s.btnText}>{busy ? '処理中...' : 'サイトを追加'}</Text>
           </TouchableOpacity>
         </View>
 
