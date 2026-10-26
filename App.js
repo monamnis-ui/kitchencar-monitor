@@ -256,9 +256,31 @@ function NotifTab() {
     if (!payload) return;
     await Clipboard.setStringAsync(payload);
     if (IS_WEB) {
-      Alert.alert('コピーしました', 'Web Push Subscription を PC 側に貼り付けてください。');
+      Alert.alert('コピーしました', 'Mac で「購読を登録」の手順を実行してください。');
     } else {
       Alert.alert('コピーしました', 'PC の config.json の "expo_push_token" に貼り付けてください。');
+    }
+  }
+
+  async function disableNotifications() {
+    // 2026-10-26: 旧購読の明示的な解除（Push API unsubscribe）。Mac側の控えは次回送信時の404/410で自動整理される
+    setErr(null);
+    setLoading(true);
+    try {
+      if (IS_WEB) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        const sub = reg ? await reg.pushManager.getSubscription() : null;
+        if (sub) {
+          const ok = await sub.unsubscribe();
+          if (!ok) throw new Error('購読の解除に失敗しました。');
+        }
+        setSubscription(null);
+        Alert.alert('解除しました', 'この端末のPush購読を解除しました。再び受け取るには「通知を有効にする」を押してください。');
+      }
+    } catch (e) {
+      setErr(e.message || String(e));
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -320,9 +342,18 @@ function NotifTab() {
             </TouchableOpacity>
             <Text style={s.hint}>
               {IS_WEB
-                ? 'PC側の送信スクリプトにこの Subscription を登録してください。'
+                ? 'コピーしたら Mac で「購読を登録」の手順を実行してください（ユニバーサルクリップボードで Mac に貼り付けできます）。'
                 : 'PC の config.json の "expo_push_token" に貼り付けてください。'}
             </Text>
+            {IS_WEB && (
+              <TouchableOpacity
+                style={[s.btn, { backgroundColor: '#999' }, loading && { opacity: 0.5 }]}
+                onPress={disableNotifications}
+                disabled={loading}
+              >
+                <Text style={s.btnText}>{loading ? '処理中...' : '🔕 この端末の購読を解除する'}</Text>
+              </TouchableOpacity>
+            )}
           </>
         )}
       </View>
