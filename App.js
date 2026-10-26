@@ -107,23 +107,6 @@ function webSupportStatus() {
   return { ok: true };
 }
 
-async function sendSubscriptionToPc(sub) {
-  try {
-    const pcIp = await AsyncStorage.getItem('pcIp');
-    if (!pcIp) return { ok: false, reason: 'PC IP未設定' };
-    const res = await fetch(`http://${pcIp}:8080/subscriptions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(sub.toJSON()),
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` };
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, reason: e.message || String(e) };
-  }
-}
-
 async function registerSwAndSubscribeWeb() {
   const support = webSupportStatus();
   if (!support.ok) throw new Error(support.message);
@@ -232,11 +215,6 @@ function NotifTab() {
       if (IS_WEB) {
         const sub = await registerSwAndSubscribeWeb();
         setSubscription(sub);
-        // PC が同じWi-Fiにいれば自動送信
-        const r = await sendSubscriptionToPc(sub);
-        if (r.ok) {
-          Alert.alert('登録完了', 'PCに購読情報を自動送信しました。');
-        }
       } else {
         const t = await registerForPushExpo();
         setToken(t);
